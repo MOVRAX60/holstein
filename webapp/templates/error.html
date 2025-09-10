@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Error {{ error_code }} - Monitoring Portal{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="card">
+        <div class="logo">⚠️</div>
+        <h1 style="color: #dc3545; margin-bottom: 10px;">Error {{ error_code }}</h1>
+        <p class="subtitle">{{ error_message }}</p>
+
+        <div style="margin: 30px 0;">
+            {% if error_code == 403 %}
+                <p style="color: #666; margin-bottom: 20px;">
+                    You don't have permission to access this resource. Please contact your administrator if you believe this is an error.
+                </p>
+            {% elif error_code == 401 %}
+                <p style="color: #666; margin-bottom: 20px;">
+                    You need to be logged in to access this resource.
+                </p>
+            {% else %}
+                <p style="color: #666; margin-bottom: 20px;">
+                    An error occurred while processing your request.
+                </p>
+            {% endif %}
+        </div>
+
+        <div style="display: flex; gap: 15px; justify-content: center; flex-wrap: wrap;">
+            {% if error_code in [401, 403] %}
+                <a href="{{ url_for('login', redirect=request.path) }}" class="btn">
+                    🔐 Login
+                </a>
+            {% endif %}
+
+            <a href="{{ url_for('index') }}" class="btn btn-secondary">
+                🏠 Home
+            </a>
+
+            <button onclick="window.history.back()" class="btn btn-secondary">
+                ← Go Back
+            </button>
+        </div>
+
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
+            <p style="font-size: 0.9rem; color: #888;">
+                If you continue to experience problems, please contact support.
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}
