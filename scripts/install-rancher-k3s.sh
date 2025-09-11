@@ -13,19 +13,39 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# Configuration
+# Load environment variables from .env file if it exists
+if [ -f ".env" ]; then
+    echo "Loading configuration from .env file..."
+    # Export variables from .env file
+    set -a
+    source .env
+    set +a
+fi
+
+# Configuration with defaults
 K3S_VERSION="${K3S_VERSION:-latest}"
 RANCHER_VERSION="${RANCHER_VERSION:-stable}"
 RANCHER_NAMESPACE="cattle-system"
 CERT_MANAGER_VERSION="v1.13.2"
 
-# Get configuration from monitoring stack
+# Get configuration from monitoring stack or use defaults
 DOMAIN="${DOMAIN:-rancher.local}"
 KEYCLOAK_REALM="${KEYCLOAK_REALM:-master}"
 
 # K3s specific settings
 K3S_HOSTNAME="${DOMAIN}"
 K3S_DATA_DIR="/var/lib/rancher/k3s"
+
+# Certificate directory - use from .env or default
+PROJECT_CERTS_DIR="${PROJECT_CERTS_DIR:-./k3s-rancher-certs}"
+# Remove quotes if they exist in the env var
+PROJECT_CERTS_DIR=$(echo "$PROJECT_CERTS_DIR" | sed 's/^"\|"$//g')
+
+# Initialize certificate file variables
+CERT_FILE=""
+KEY_FILE=""
+
+echo "Using certificate directory: $PROJECT_CERTS_DIR"
 
 # Function to display header
 show_header() {
@@ -130,7 +150,7 @@ check_system_requirements() {
     echo -e "${GREEN}✓ System requirements check completed${NC}"
 }
 
-# Function to install K3s
+# Function to install K3s with fallback methods
 install_k3s() {
     echo -e "${YELLOW}Installing K3s...${NC}"
 
@@ -149,17 +169,70 @@ install_k3s() {
         echo "  ✓ Firewall configured"
     fi
 
-    # Install K3s with specific configuration for coexistence
-    echo "Installing K3s with monitoring stack-friendly configuration..."
-    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="$K3S_VERSION" sh -s - \
-        --write-kubeconfig-mode 644 \
+    # K3s installation parameters
+    local k3s_params="--write-kubeconfig-mode 644 \
         --disable traefik \
         --disable servicelb \
         --disable local-storage \
         --cluster-cidr=10.42.0.0/16 \
         --service-cidr=10.43.0.0/16 \
         --node-external-ip=$(hostname -I | awk '{print $1}') \
-        --bind-address=0.0.0.0
+        --bind-address=0.0.0.0"
+
+    # Use specific version instead of "latest" for reliability
+    local k3s_stable_version="v1.28.4+k3s2"
+    local install_version="${K3S_VERSION}"
+    if [ "$install_version" = "latest" ]; then
+        install_version="$k3s_stable_version"
+        echo "Using stable version $install_version instead of 'latest'"
+    fi
+
+    # Method 1: Standard installation with specific version
+    echo "Installing K3s with monitoring stack-friendly configuration..."
+    echo "Attempting Method 1: Standard installation..."
+
+    if curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="$install_version" sh -s - $k3s_params; then
+        echo -e "${GREEN}✓ Method 1 succeeded${NC}"
+    else
+        echo -e "${YELLOW}Method 1 failed, trying Method 2: Manual download...${NC}"
+
+        # Clean up failed installation
+        sudo systemctl stop k3s 2>/dev/null || true
+        sudo /usr/local/bin/k3s-uninstall.sh 2>/dev/null || true
+
+        # Method 2: Manual binary download
+        echo "Downloading K3s binary manually..."
+        if sudo curl -L -o /usr/local/bin/k3s \
+            "https://github.com/k3s-io/k3s/releases/download/${install_version}/k3s" && \
+           sudo chmod +x /usr/local/bin/k3s && \
+           curl -sfL https://get.k3s.io -o /tmp/k3s-install.sh && \
+           chmod +x /tmp/k3s-install.sh && \
+           sudo INSTALL_K3S_SKIP_DOWNLOAD=true /tmp/k3s-install.sh $k3s_params; then
+            echo -e "${GREEN}✓ Method 2 succeeded${NC}"
+            rm -f /tmp/k3s-install.sh
+        else
+            echo -e "${YELLOW}Method 2 failed, trying Method 3: Alternative mirror...${NC}"
+
+            # Clean up failed installation
+            sudo systemctl stop k3s 2>/dev/null || true
+            sudo /usr/local/bin/k3s-uninstall.sh 2>/dev/null || true
+
+            # Method 3: Alternative mirror
+            echo "Using alternative download mirror..."
+            if INSTALL_K3S_MIRROR=cn INSTALL_K3S_VERSION="$install_version" \
+               curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | sh -s - $k3s_params; then
+                echo -e "${GREEN}✓ Method 3 succeeded${NC}"
+            else
+                echo -e "${RED}All installation methods failed${NC}"
+                echo "Please check:"
+                echo "  1. Internet connectivity"
+                echo "  2. Firewall settings"
+                echo "  3. Available disk space"
+                echo "  4. System requirements"
+                exit 1
+            fi
+        fi
+    fi
 
     # Wait for K3s to be ready
     echo "Waiting for K3s to be ready..."
@@ -169,6 +242,7 @@ install_k3s() {
         ((count++))
         if [ $count -gt 24 ]; then  # 2 minutes timeout
             echo -e "${RED}Timeout waiting for K3s to start${NC}"
+            echo "Check K3s logs with: sudo journalctl -u k3s"
             exit 1
         fi
         echo "  Waiting... ($count/24)"
@@ -256,9 +330,6 @@ generate_certificates() {
     if [ -f "$PROJECT_CERTS_DIR/ssl.crt" ] && [ -f "$PROJECT_CERTS_DIR/ssl.key" ]; then
         echo "Using existing certificates from $PROJECT_CERTS_DIR"
 
-        # Create symlinks or copy to expected location for Kubernetes
-        local cert_dir="$PROJECT_CERTS_DIR"
-
         # Verify certificate is valid for our domain
         if openssl x509 -in "$PROJECT_CERTS_DIR/ssl.crt" -text -noout | grep -q "$K3S_HOSTNAME"; then
             echo -e "${GREEN}✓ Existing certificate is valid for $K3S_HOSTNAME${NC}"
@@ -305,11 +376,34 @@ generate_certificates() {
     echo "  Certificate: $CERT_FILE"
     echo "  Private Key: $KEY_FILE"
     echo "  Storage: $PROJECT_CERTS_DIR"
+
+    # Export for use by other functions
+    export CERT_FILE KEY_FILE
 }
 
 # Function to install Rancher
 install_rancher() {
     echo -e "${YELLOW}Installing Rancher on K3s...${NC}"
+
+    # Ensure KUBECONFIG is properly set
+    export KUBECONFIG=~/.kube/config
+
+    # Verify kubectl connectivity
+    echo "Verifying Kubernetes connectivity..."
+    if ! kubectl cluster-info >/dev/null 2>&1; then
+        echo -e "${RED}Error: Cannot connect to Kubernetes cluster${NC}"
+        echo "Trying to fix kubeconfig..."
+        sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+        sudo chown $(id -u):$(id -g) ~/.kube/config
+        chmod 600 ~/.kube/config
+
+        if ! kubectl cluster-info >/dev/null 2>&1; then
+            echo -e "${RED}Error: Still cannot connect to Kubernetes cluster${NC}"
+            echo "Please check if K3s is running: sudo systemctl status k3s"
+            exit 1
+        fi
+    fi
+    echo -e "${GREEN}✓ Kubernetes cluster is accessible${NC}"
 
     # Check if Rancher is already installed
     if kubectl get namespace $RANCHER_NAMESPACE >/dev/null 2>&1; then
@@ -320,14 +414,43 @@ install_rancher() {
     fi
 
     # Create Rancher namespace
-    kubectl create namespace $RANCHER_NAMESPACE || true
+    kubectl create namespace $RANCHER_NAMESPACE 2>/dev/null || echo "Namespace $RANCHER_NAMESPACE already exists"
+
+    # Ensure certificates exist before creating secret
+    if [ ! -f "$CERT_FILE" ] || [ ! -f "$KEY_FILE" ]; then
+        echo -e "${RED}Error: Certificate files not found${NC}"
+        echo "Expected files:"
+        echo "  Certificate: $CERT_FILE"
+        echo "  Private Key: $KEY_FILE"
+        echo "Regenerating certificates..."
+        generate_certificates
+    fi
+
+    # Verify certificate files exist
+    if [ ! -f "$CERT_FILE" ] || [ ! -f "$KEY_FILE" ]; then
+        echo -e "${RED}Error: Certificate files still not found after generation${NC}"
+        exit 1
+    fi
 
     # Create TLS secret
     echo "Creating TLS secret for Rancher..."
+    kubectl delete secret tls-rancher-ingress -n $RANCHER_NAMESPACE 2>/dev/null || true
     kubectl create secret tls tls-rancher-ingress \
-        --cert=./k3s-rancher-certs/tls.crt \
-        --key=./k3s-rancher-certs/tls.key \
-        --namespace $RANCHER_NAMESPACE || true
+        --cert="$CERT_FILE" \
+        --key="$KEY_FILE" \
+        --namespace $RANCHER_NAMESPACE
+
+    echo -e "${GREEN}✓ TLS secret created${NC}"
+
+    # Update Helm repositories
+    echo "Updating Helm repositories..."
+    helm repo update
+
+    # Determine Rancher version
+    local rancher_version_flag=""
+    if [ "$RANCHER_VERSION" != "stable" ] && [ "$RANCHER_VERSION" != "latest" ]; then
+        rancher_version_flag="--version $RANCHER_VERSION"
+    fi
 
     # Install Rancher via Helm
     echo "Installing Rancher via Helm..."
@@ -338,7 +461,7 @@ install_rancher() {
         --set ingress.tls.source=secret \
         --set privateCA=true \
         --set replicas=1 \
-        --version $RANCHER_VERSION
+        $rancher_version_flag
 
     # Wait for Rancher to be ready
     echo "Waiting for Rancher to be ready (this may take several minutes)..."
