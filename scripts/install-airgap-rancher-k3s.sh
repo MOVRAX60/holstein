@@ -37,6 +37,12 @@ KEYCLOAK_REALM="${KEYCLOAK_REALM:-master}"
 K3S_HOSTNAME="${DOMAIN}"
 RANCHER_NAMESPACE="cattle-system"
 
+# Version information
+K3S_VERSION="${K3S_VERSION:-v1.28.4+k3s2}"
+RANCHER_VERSION="${RANCHER_VERSION:-v2.8.0}"
+CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.13.2}"
+HELM_VERSION="${HELM_VERSION:-v3.13.3}"
+
 # Certificate directory
 PROJECT_CERTS_DIR="${PROJECT_CERTS_DIR:-./config/certs}"
 PROJECT_CERTS_DIR=$(echo "$PROJECT_CERTS_DIR" | sed 's/^"\|"$//g')
@@ -96,7 +102,7 @@ check_airgap_assets() {
     local required_files=(
         "$BINARIES_DIR/k3s"
         "$BINARIES_DIR/k3s-install.sh"
-        "$BINARIES_DIR/helm-v3.13.3-linux-amd64.tar.gz"
+        "$BINARIES_DIR/helm-${HELM_VERSION}-linux-amd64.tar.gz"
         "$IMAGES_DIR/k3s-airgap-images-amd64.tar"
         "$MANIFESTS_DIR/cert-manager.crds.yaml"
         "$MANIFESTS_DIR/cert-manager.yaml"
@@ -111,12 +117,12 @@ check_airgap_assets() {
     if [ ${#missing_assets[@]} -gt 0 ]; then
         print_color $RED "Missing air-gap assets:"
         for asset in "${missing_assets[@]}"; do
-            print_color $RED "  ✗ $asset"
+            print_color $RED "  X $asset"
         done
         return 1
     fi
 
-    print_color $GREEN "✓ All required air-gap assets found"
+    print_color $GREEN "OK All required air-gap assets found"
 
     # Show version info if available
     if [ -f "$AIRGAP_DIR/versions.json" ]; then
@@ -157,7 +163,7 @@ install_k3s_airgap() {
         sudo firewall-cmd --permanent --add-port=10250/tcp  # Kubelet
         sudo firewall-cmd --permanent --add-port=8472/udp   # Flannel VXLAN
         sudo firewall-cmd --reload
-        print_color $GREEN "✓ Firewall configured"
+        print_color $GREEN "OK Firewall configured"
     fi
 
     # Install K3s service using air-gap method
@@ -200,7 +206,7 @@ install_k3s_airgap() {
         echo "export KUBECONFIG=~/.kube/config" >> ~/.bashrc
     fi
 
-    print_color $GREEN "✓ K3s installed successfully!"
+    print_color $GREEN "OK K3s installed successfully!"
     k3s --version | head -n1
 }
 
@@ -215,7 +221,7 @@ install_helm_airgap() {
 
     # Extract and install Helm
     print_color $CYAN "Installing Helm binary..."
-    local helm_archive="$BINARIES_DIR/helm-v3.13.3-linux-amd64.tar.gz"
+    local helm_archive="$BINARIES_DIR/helm-${HELM_VERSION}-linux-amd64.tar.gz"
 
     if [ ! -f "$helm_archive" ]; then
         print_color $RED "Error: Helm archive not found: $helm_archive"
@@ -233,8 +239,72 @@ install_helm_airgap() {
     # Cleanup
     rm -rf "$temp_dir"
 
-    print_color $GREEN "✓ Helm installed successfully!"
+    print_color $GREEN "OK Helm installed successfully!"
     helm version --short
+}
+
+# Function to download missing charts
+download_missing_charts() {
+    print_color $BLUE "=== Checking and Downloading Charts ==="
+    
+    # Ensure charts directory exists
+    mkdir -p "$CHARTS_DIR"
+    
+    # Check for required charts
+    local rancher_chart=$(ls "$CHARTS_DIR/rancher-"*.tgz 2>/dev/null | head -n1)
+    local certmgr_chart=$(ls "$CHARTS_DIR/cert-manager-"*.tgz 2>/dev/null | head -n1)
+    
+    local charts_missing=false
+    
+    if [ ! -f "$rancher_chart" ]; then
+        print_color $YELLOW "Rancher chart not found, will download"
+        charts_missing=true
+    else
+        print_color $GREEN "Rancher chart found: $(basename "$rancher_chart")"
+    fi
+    
+    if [ ! -f "$certmgr_chart" ]; then
+        print_color $YELLOW "cert-manager chart not found, will download"
+        charts_missing=true
+    else
+        print_color $GREEN "cert-manager chart found: $(basename "$certmgr_chart")"
+    fi
+    
+    if [ "$charts_missing" = true ]; then
+        print_color $CYAN "Downloading missing charts using Helm..."
+        print_color $YELLOW "Note: This requires internet access"
+        
+        # Test internet connectivity
+        if ! curl -s --max-time 10 https://releases.rancher.com >/dev/null; then
+            print_color $RED "Error: Cannot access internet to download charts"
+            print_color $YELLOW "Please download charts manually or ensure internet access"
+            return 1
+        fi
+        
+        # Add Helm repositories
+        print_color $CYAN "Adding Helm repositories..."
+        helm repo add rancher-stable https://releases.rancher.com/server-charts/stable --force-update
+        helm repo add jetstack https://charts.jetstack.io --force-update
+        helm repo update
+        
+        # Download Rancher chart if missing
+        if [ ! -f "$rancher_chart" ]; then
+            print_color $CYAN "Downloading Rancher chart..."
+            helm pull rancher-stable/rancher --version "$RANCHER_VERSION" --destination "$CHARTS_DIR"
+            print_color $GREEN "Rancher chart downloaded"
+        fi
+        
+        # Download cert-manager chart if missing  
+        if [ ! -f "$certmgr_chart" ]; then
+            print_color $CYAN "Downloading cert-manager chart..."
+            helm pull jetstack/cert-manager --version "$CERT_MANAGER_VERSION" --destination "$CHARTS_DIR"
+            print_color $GREEN "cert-manager chart downloaded"
+        fi
+        
+        print_color $GREEN "OK All charts downloaded successfully"
+    else
+        print_color $GREEN "OK All required charts found"
+    fi
 }
 
 # Function to load container images
@@ -259,7 +329,7 @@ load_container_images() {
         done
 
         if [ $image_count -gt 0 ]; then
-            print_color $GREEN "✓ Loaded $image_count additional container images"
+            print_color $GREEN "OK Loaded $image_count additional container images"
         else
             print_color $YELLOW "No additional container images found to load"
             print_color $CYAN "Run the Docker script on a connected machine to download images"
@@ -299,6 +369,7 @@ install_cert_manager_airgap() {
             --set installCRDs=false
     else
         print_color $RED "Error: Neither cert-manager manifests nor charts found"
+        print_color $YELLOW "Try running option 4 to download missing charts"
         return 1
     fi
 
@@ -306,7 +377,7 @@ install_cert_manager_airgap() {
     print_color $CYAN "Waiting for cert-manager to be ready..."
     kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=cert-manager -n cert-manager --timeout=300s
 
-    print_color $GREEN "✓ cert-manager installed successfully!"
+    print_color $GREEN "OK cert-manager installed successfully!"
 }
 
 # Function to generate certificates
@@ -340,7 +411,7 @@ generate_certificates() {
     KEY_FILE="$PROJECT_CERTS_DIR/tls.key"
     export CERT_FILE KEY_FILE
 
-    print_color $GREEN "✓ Certificates generated successfully!"
+    print_color $GREEN "OK Certificates generated successfully!"
     print_color $CYAN "Certificate: $CERT_FILE"
     print_color $CYAN "Private Key: $KEY_FILE"
 }
@@ -396,6 +467,7 @@ install_rancher_airgap() {
             --set replicas=1
     else
         print_color $RED "Error: Rancher chart not found in $CHARTS_DIR"
+        print_color $YELLOW "Try running option 4 to download missing charts"
         return 1
     fi
 
@@ -403,7 +475,7 @@ install_rancher_airgap() {
     print_color $CYAN "Waiting for Rancher to be ready (this may take several minutes)..."
     kubectl -n $RANCHER_NAMESPACE rollout status deploy/rancher --timeout=600s
 
-    print_color $GREEN "✓ Rancher installed successfully!"
+    print_color $GREEN "OK Rancher installed successfully!"
 }
 
 # Function to show installation summary
@@ -418,16 +490,16 @@ show_installation_summary() {
 
     print_color $CYAN "Installed Components:"
     if command_exists k3s; then
-        print_color $CYAN "  ✓ K3s: $(k3s --version | head -n1 | awk '{print $3}')"
+        print_color $CYAN "  OK K3s: $(k3s --version | head -n1 | awk '{print $3}')"
     fi
     if command_exists helm; then
-        print_color $CYAN "  ✓ Helm: $(helm version --short)"
+        print_color $CYAN "  OK Helm: $(helm version --short)"
     fi
     if kubectl get namespace cert-manager >/dev/null 2>&1; then
-        print_color $CYAN "  ✓ cert-manager: Installed"
+        print_color $CYAN "  OK cert-manager: Installed"
     fi
     if helm list -n $RANCHER_NAMESPACE 2>/dev/null | grep -q rancher; then
-        print_color $CYAN "  ✓ Rancher: Installed"
+        print_color $CYAN "  OK Rancher: Installed"
     fi
 
     echo ""
@@ -455,38 +527,38 @@ post_install_checks() {
 
     # Check K3s service
     if systemctl is-active --quiet k3s; then
-        print_color $GREEN "  ✓ K3s service is running"
+        print_color $GREEN "  OK K3s service is running"
     else
-        print_color $RED "  ✗ K3s service is not running"
+        print_color $RED "  X K3s service is not running"
     fi
 
     # Check cluster status
     if kubectl get nodes 2>/dev/null | grep -q Ready; then
-        print_color $GREEN "  ✓ K3s cluster is ready"
+        print_color $GREEN "  OK K3s cluster is ready"
     else
-        print_color $RED "  ✗ K3s cluster is not ready"
+        print_color $RED "  X K3s cluster is not ready"
     fi
 
     # Check cert-manager
     if kubectl get pods -n cert-manager 2>/dev/null | grep -q Running; then
-        print_color $GREEN "  ✓ cert-manager is running"
+        print_color $GREEN "  OK cert-manager is running"
     else
-        print_color $YELLOW "  ⚠ cert-manager is not running"
+        print_color $YELLOW "  ! cert-manager is not running"
     fi
 
     # Check Rancher
     if kubectl get pods -n $RANCHER_NAMESPACE 2>/dev/null | grep -q Running; then
-        print_color $GREEN "  ✓ Rancher is running"
+        print_color $GREEN "  OK Rancher is running"
     else
-        print_color $YELLOW "  ⚠ Rancher is not running"
+        print_color $YELLOW "  ! Rancher is not running"
     fi
 
     # Check for failed pods
     local failed_pods=$(kubectl get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded 2>/dev/null | wc -l)
     if [ $failed_pods -le 1 ]; then  # Header line counts as 1
-        print_color $GREEN "  ✓ No failed pods detected"
+        print_color $GREEN "  OK No failed pods detected"
     else
-        print_color $YELLOW "  ⚠ Some pods may have issues"
+        print_color $YELLOW "  ! Some pods may have issues"
         kubectl get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded
     fi
 }
@@ -501,20 +573,21 @@ show_main_menu() {
         print_color $GREEN "  1. Check Air-Gap Assets"
         print_color $GREEN "  2. Install K3s (Air-Gap)"
         print_color $GREEN "  3. Install Helm (Air-Gap)"
-        print_color $GREEN "  4. Load Container Images"
-        print_color $GREEN "  5. Install cert-manager (Air-Gap)"
-        print_color $GREEN "  6. Generate Certificates"
-        print_color $GREEN "  7. Install Rancher (Air-Gap)"
-        print_color $GREEN "  8. Full Air-Gap Installation"
+        print_color $GREEN "  4. Download Missing Charts"
+        print_color $GREEN "  5. Load Container Images"
+        print_color $GREEN "  6. Install cert-manager (Air-Gap)"
+        print_color $GREEN "  7. Generate Certificates"
+        print_color $GREEN "  8. Install Rancher (Air-Gap)"
+        print_color $GREEN "  9. Full Air-Gap Installation"
         echo ""
         print_color $CYAN "Utilities:"
-        print_color $CYAN "  9. Post-Installation Checks"
-        print_color $CYAN "  10. Show Summary"
+        print_color $CYAN "  10. Post-Installation Checks"
+        print_color $CYAN "  11. Show Summary"
         echo ""
         print_color $RED "  0. Exit"
         echo ""
 
-        read -p "Select option (0-10): " choice
+        read -p "Select option (0-11): " choice
 
         case $choice in
             1)
@@ -530,26 +603,31 @@ show_main_menu() {
                 read -p "Press Enter to continue..."
                 ;;
             4)
-                load_container_images
+                download_missing_charts
                 read -p "Press Enter to continue..."
                 ;;
             5)
-                install_cert_manager_airgap
+                load_container_images
                 read -p "Press Enter to continue..."
                 ;;
             6)
-                generate_certificates
+                install_cert_manager_airgap
                 read -p "Press Enter to continue..."
                 ;;
             7)
-                install_rancher_airgap
+                generate_certificates
                 read -p "Press Enter to continue..."
                 ;;
             8)
+                install_rancher_airgap
+                read -p "Press Enter to continue..."
+                ;;
+            9)
                 if confirm_action "Proceed with full air-gap installation?"; then
                     check_airgap_assets && \
                     install_k3s_airgap && \
                     install_helm_airgap && \
+                    download_missing_charts && \
                     load_container_images && \
                     install_cert_manager_airgap && \
                     generate_certificates && \
@@ -559,11 +637,11 @@ show_main_menu() {
                 fi
                 read -p "Press Enter to continue..."
                 ;;
-            9)
+            10)
                 post_install_checks
                 read -p "Press Enter to continue..."
                 ;;
-            10)
+            11)
                 show_installation_summary
                 read -p "Press Enter to continue..."
                 ;;
@@ -586,6 +664,7 @@ case "${1:-}" in
         check_airgap_assets
         install_k3s_airgap
         install_helm_airgap
+        download_missing_charts
         load_container_images
         install_cert_manager_airgap
         generate_certificates
