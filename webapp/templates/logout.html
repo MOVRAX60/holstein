@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}Logged Out - Monitoring Portal{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="card">
+        <div class="logo">✅</div>
+        <h1 style="color: #1e3c72; margin-bottom: 10px;">You have been logged out</h1>
+        <p class="subtitle">Thank you for using the Monitoring Portal</p>
+
+        <div style="margin: 30px 0;">
+            <p style="color: #666; margin-bottom: 20px;">
+                Your session has been ended successfully.
+            </p>
+        </div>
+
+        <div style="display: flex; gap: 15px; justify-content: center; flex-wrap: wrap;">
+            <a href="{{ url_for('index') }}" class="btn">
+                🔐 Login Again
+            </a>
+        </div>
+
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
+            <p style="font-size: 0.9rem; color: #888;">
+                Session cleared successfully
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}

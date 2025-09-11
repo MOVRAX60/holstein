@@ -1,0 +1,235 @@
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: ${STACK_NAME:-holstein}-nginx-proxy
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./config/certs:/etc/ssl/certs:ro
+      - ./data/nginx/logs:/var/log/nginx
+    depends_on:
+      - webapp
+      - keycloak
+      - grafana
+      - prometheus
+      - wikijs
+    networks:
+      - ${NETWORK_NAME:-monitoring}
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:-23.0}
+    container_name: ${STACK_NAME:-holstein}-keycloak
+    restart: unless-stopped
+    environment:
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
+      - KC_HOSTNAME=${DOMAIN:-rancher.local}
+      - KC_HOSTNAME_STRICT=false
+      - KC_HTTP_ENABLED=true
+      - KC_HTTP_RELATIVE_PATH=/auth
+      - KC_PROXY=edge
+    command:
+      - start-dev
+      - --http-enabled=true
+      - --http-relative-path=/auth
+      - --hostname-strict=false
+      - --proxy=edge
+      - --hostname=${DOMAIN:-rancher.local}
+    volumes:
+      - ./data/keycloak/data:/opt/keycloak/data
+      - ./data/keycloak/logs:/opt/keycloak/logs
+    healthcheck:
+      test: |
+        curl -f http://localhost:8080/auth/health/ready || 
+        curl -f http://localhost:8080/auth/health || 
+        curl -f http://localhost:8080/auth/realms/master || 
+        exit 1
+        interval: 30s
+        timeout: 15s
+        retries: 10
+        start_period: 300s  # Increased - Keycloak takes time to start
+    networks:
+      - ${NETWORK_NAME:-monitoring}
+
+  keycloak-db:
+    image: postgres:${POSTGRES_VERSION:-15-alpine}
+    container_name: ${STACK_NAME:-holstein}-keycloak-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-keycloak}
+      - POSTGRES_USER=${POSTGRES_USER:-keycloak}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-${KEYCLOAK_DB_PASSWORD}}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-keycloak} -d ${POSTGRES_DB:-keycloak}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - ${NETWORK_NAME:-monitoring}
+
+  wikijs-db:
+    image: postgres:${POSTGRES_VERSION:-15-alpine}
+    container_name: ${STACK_NAME:-holstein}-wikijs-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${WIKIJS_DB_NAME:-wikijs}
+      - POSTGRES_USER=${WIKIJS_DB_USER:-wikijs}
+      - POSTGRES_PASSWORD=${WIKIJS_DB_PASSWORD}
+    volumes:
+      - ./data/wikijs-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${WIKIJS_DB_USER:-wikijs} -d ${WIKIJS_DB_NAME:-wikijs}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - ${NETWORK_NAME:-monitoring}
+
+  wikijs:
+    image: ghcr.io/requarks/wiki:${WIKIJS_VERSION:-2}
+    container_name: ${STACK_NAME:-holstein}-wikijs
+    restart: unless-stopped
+    environment:
+      # Database Configuration
+      - DB_TYPE=postgres
+      - DB_HOST=wikijs-db
+      - DB_PORT=5432
+      - DB_NAME=${WIKIJS_DB_NAME:-wikijs}
+      - DB_USER=${WIKIJS_DB_USER:-wikijs}
+      - DB_PASS=${WIKIJS_DB_PASSWORD}
+
+      # Wiki.js Configuration
+      - WIKI_ADMIN_EMAIL=${WIKIJS_ADMIN_EMAIL:-admin@${DOMAIN:-rancher.local}}
+      - WIKI_INSTALL=${WIKIJS_AUTO_INSTALL:-true}
+
+      # SSL and URL Configuration
+      - HA_ACTIVE=true
+      - HA_SERVER_NAME=${DOMAIN:-rancher.local}
+
+      # OIDC Authentication (Keycloak Integration)
+      - AUTH_OIDC_ENABLED=${WIKIJS_OIDC_ENABLED:-true}
+      - AUTH_OIDC_CLIENT_ID=${WIKIJS_CLIENT_ID:-wikijs}
+      - AUTH_OIDC_CLIENT_SECRET=${WIKIJS_CLIENT_SECRET}
+      - AUTH_OIDC_ISSUER=https://${DOMAIN:-rancher.local}/auth/realms/${KEYCLOAK_REALM:-master}
+      - AUTH_OIDC_AUTHORIZATION_URL=https://${DOMAIN:-rancher.local}/auth/realms/${KEYCLOAK_REALM:-master}/protocol/openid-connect/auth
+      - AUTH_OIDC_TOKEN_URL=https://${DOMAIN:-rancher.local}/auth/realms/${KEYCLOAK_REALM:-master}/protocol/openid-connect/token
+      - AUTH_OIDC_USERINFO_URL=https://${DOMAIN:-rancher.local}/auth/realms/${KEYCLOAK_REALM:-master}/protocol/openid-connect/userinfo
+      - AUTH_OIDC_LOGOUT_URL=https://${DOMAIN:-rancher.local}/auth/realms/${KEYCLOAK_REALM:-master}/protocol/openid-connect/logout
+    volumes:
+      - ./data/wikijs/content:/wiki/content
+      - ./data/wikijs/data:/wiki/data
+      - ./data/wikijs/logs:/wiki/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      - wikijs-db
+      - keycloak
+    networks:
+      - ${NETWORK_NAME:-monitoring}
+
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION:-latest}
+    container_name: ${STACK_NAME:-holstein}-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.external-url=https://${DOMAIN:-rancher.local}/prometheus/'
+      - '--web.route-prefix=/prometheus/'
+      - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-15d}'
+      - '--storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-10GB}'
+    volumes:
+      - ./data/prometheus:/prometheus
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./config/prometheus/rules:/etc/prometheus/rules:ro
+    networks:
+      - ${NETWORK_NAME:-monitoring}
+
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION:-latest}
+    container_name: ${STACK_NAME:-holstein}-grafana
+    restart: unless-stopped
+    environment:
+      - GF_ROOT_URL=https://${DOMAIN:-rancher.local}/grafana/
+      - GF_SERVE_FROM_SUB_PATH=true
+      - GF_AUTH_GENERIC_OAUTH_ENABLED=true
+      - GF_AUTH_GENERIC_OAUTH_NAME=Keycloak
+      - GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP=true
+      - GF_AUTH_GENERIC_OAUTH_CLIENT_ID=${GRAFANA_CLIENT_ID:-grafana}
+      - GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET=${GRAFANA_CLIENT_SECRET}
+      - GF_AUTH_GENERIC_OAUTH_SCOPES=openid profile email roles
+      - GF_AUTH_GENERIC_OAUTH_AUTH_URL=https://${DOMAIN:-rancher.local}/auth/realms/${KEYCLOAK_REALM:-master}/protocol/openid-connect/auth
+      - GF_AUTH_GENERIC_OAUTH_TOKEN_URL=https://${DOMAIN:-rancher.local}/auth/realms/${KEYCLOAK_REALM:-master}/protocol/openid-connect/token
+      - GF_AUTH_GENERIC_OAUTH_API_URL=https://${DOMAIN:-rancher.local}/auth/realms/${KEYCLOAK_REALM:-master}/protocol/openid-connect/userinfo
+      - GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH=contains(groups[*], 'admin') && 'Admin' || contains(groups[*], 'modify') && 'Editor' || 'Viewer'
+      - GF_AUTH_GENERIC_OAUTH_AUTO_LOGIN=false
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_LOG_LEVEL=${GRAFANA_LOG_LEVEL:-info}
+    volumes:
+      - ./data/grafana:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - keycloak
+      - prometheus
+    networks:
+      - ${NETWORK_NAME:-monitoring}
+
+  webapp:
+    build:
+      context: ./webapp
+      dockerfile: Dockerfile
+    container_name: ${STACK_NAME:-holstein}-flask-site
+    restart: unless-stopped
+    environment:
+      - KEYCLOAK_URL=http://keycloak:8080/auth
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM:-master}
+      - KEYCLOAK_CLIENT_ID=${WEBAPP_CLIENT_ID:-webapp}
+      - KEYCLOAK_CLIENT_SECRET=${WEBAPP_CLIENT_SECRET}
+      - SECRET_KEY=${WEBAPP_SECRET_KEY}
+      - FLASK_ENV=${FLASK_ENV:-production}
+      - FLASK_DEBUG=${FLASK_DEBUG:-false}
+      - DOMAIN=${DOMAIN:-rancher.local}
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-true}
+      - SESSION_COOKIE_HTTPONLY=${SESSION_COOKIE_HTTPONLY:-true}
+      - SESSION_COOKIE_SAMESITE=${SESSION_COOKIE_SAMESITE:-Lax}
+      # Wiki.js Integration
+      - WIKIJS_URL=https://${DOMAIN:-rancher.local}/wiki
+      - WIKIJS_ENABLED=${WIKIJS_ENABLED:-true}
+      - DOCUMENTATION_URL=https://${DOMAIN:-rancher.local}/wiki
+      # External Rancher Integration
+      - RANCHER_URL=https://${RANCHER_EXTERNAL_HOST:-rancher-k3s.local}
+      - RANCHER_ENABLED=${RANCHER_ENABLED:-true}
+    volumes:
+      - ./data/webapp/logs:/app/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - keycloak
+      - wikijs
+    networks:
+      - ${NETWORK_NAME:-monitoring}
+
+networks:
+  monitoring:
+    name: ${NETWORK_NAME:-monitoring}
+    driver: bridge
