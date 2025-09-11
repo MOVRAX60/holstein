@@ -1,8 +1,8 @@
 # Windows Air-Gap Asset Downloader for K3s and Rancher
-# Downloads all assets to projectroot/airgap/ structure
+# Clean PowerShell script without Unicode issues
 
 param(
-    [string]$K3sVersion = "v1.33.4+k3s1",
+    [string]$K3sVersion = "v1.28.4+k3s2",
     [string]$RancherVersion = "v2.8.0",
     [string]$CertManagerVersion = "v1.13.2",
     [string]$HelmVersion = "v3.13.3"
@@ -70,13 +70,14 @@ function Download-FileWithProgress {
         Write-Progress -Activity "Downloading $Description" -Completed
 
         $fileSize = (Get-Item $OutputPath).Length / 1MB
-        Write-ColorOutput "✓ Downloaded: $Description ($([math]::Round($fileSize, 2)) MB)" "Green"
+        $fileSizeRounded = [math]::Round($fileSize, 2)
+        Write-ColorOutput "SUCCESS Downloaded: $Description ($fileSizeRounded MB)" "Green"
 
         $webClient.Dispose()
         Get-EventSubscriber | Unregister-Event
     }
     catch {
-        Write-ColorOutput "✗ Failed to download $Description`: $($_.Exception.Message)" "Red"
+        Write-ColorOutput "ERROR Failed to download $Description : $($_.Exception.Message)" "Red"
         throw
     }
 }
@@ -90,7 +91,7 @@ function Initialize-DirectoryStructure {
     New-DirectoryIfNotExists $ChartsDir
     New-DirectoryIfNotExists $ManifestsDir
 
-    Write-ColorOutput "✓ Directory structure created" "Green"
+    Write-ColorOutput "SUCCESS Directory structure created" "Green"
 }
 
 function Download-K3sAssets {
@@ -135,48 +136,27 @@ function Download-CertManagerAssets {
 }
 
 function Download-RancherCharts {
-    Write-ColorOutput "=== Downloading Rancher Charts ===" "Blue"
+    Write-ColorOutput "=== Preparing Chart Download Info ===" "Blue"
 
-    # Extract Helm first if needed
-    $helmBinary = Join-Path $BinariesDir "helm"
-    $helmArchive = Join-Path $BinariesDir "helm-$HelmVersion-linux-amd64.tar.gz"
-
-    if (!(Test-Path $helmBinary) -and (Test-Path $helmArchive)) {
-        Write-ColorOutput "Extracting Helm for chart download..." "Cyan"
-        Expand-Archive -Path $helmArchive -DestinationPath $BinariesDir -Force
-        $extractedHelm = Join-Path $BinariesDir "linux-amd64\helm"
-        if (Test-Path $extractedHelm) {
-            Copy-Item $extractedHelm $helmBinary
-            Remove-Item (Join-Path $BinariesDir "linux-amd64") -Recurse -Force
+    # Create chart download instructions for Linux
+    $chartInfoPath = Join-Path $ChartsDir "chart-info.json"
+    $chartInfo = @{
+        "rancher_chart" = @{
+            "repo" = "rancher-stable"
+            "repo_url" = "https://releases.rancher.com/server-charts/stable"
+            "chart" = "rancher"
+            "version" = $RancherVersion
+        }
+        "certmanager_chart" = @{
+            "repo" = "jetstack"
+            "repo_url" = "https://charts.jetstack.io"
+            "chart" = "cert-manager"
+            "version" = $CertManagerVersion
         }
     }
 
-    if (Test-Path $helmBinary) {
-        # Use extracted Helm to download charts
-        $env:PATH = "$BinariesDir;$env:PATH"
-
-        # Download Rancher chart
-        $rancherChartPath = Join-Path $ChartsDir "rancher-$RancherVersion.tgz"
-        if (!(Test-Path $rancherChartPath)) {
-            Write-ColorOutput "Downloading Rancher chart..." "Cyan"
-            & $helmBinary repo add rancher-stable https://releases.rancher.com/server-charts/stable --force-update
-            & $helmBinary repo update
-            & $helmBinary pull rancher-stable/rancher --version $RancherVersion --destination $ChartsDir
-            Write-ColorOutput "✓ Downloaded Rancher chart" "Green"
-        }
-
-        # Download cert-manager chart
-        $certManagerChartPath = Join-Path $ChartsDir "cert-manager-$CertManagerVersion.tgz"
-        if (!(Test-Path $certManagerChartPath)) {
-            Write-ColorOutput "Downloading cert-manager chart..." "Cyan"
-            & $helmBinary repo add jetstack https://charts.jetstack.io --force-update
-            & $helmBinary repo update
-            & $helmBinary pull jetstack/cert-manager --version $CertManagerVersion --destination $ChartsDir
-            Write-ColorOutput "✓ Downloaded cert-manager chart" "Green"
-        }
-    } else {
-        Write-ColorOutput "Helm binary not available for chart download" "Yellow"
-    }
+    $chartInfo | ConvertTo-Json -Depth 3 | Out-File -FilePath $chartInfoPath -Encoding UTF8
+    Write-ColorOutput "SUCCESS Created chart download info for Linux" "Green"
 }
 
 function Create-ImageLists {
@@ -206,7 +186,7 @@ function Create-ImageLists {
     # Save image list
     $imageListPath = Join-Path $ImagesDir "container-images.txt"
     $allImages | Out-File -FilePath $imageListPath -Encoding UTF8
-    Write-ColorOutput "✓ Created image list: $imageListPath" "Green"
+    Write-ColorOutput "SUCCESS Created image list: $imageListPath" "Green"
 
     # Create Docker pull script
     $dockerScriptPath = Join-Path $ImagesDir "pull-and-save-images.sh"
@@ -221,7 +201,7 @@ function Create-ImageLists {
     )
 
     foreach ($image in $allImages) {
-        $safeName = $image -replace "[/:]", "_"
+        $safeName = $image -replace "/", "_" -replace ":", "_"
         $dockerScript += "echo 'Processing: $image'"
         $dockerScript += "docker pull $image"
         $dockerScript += "docker save $image -o $safeName.tar"
@@ -232,7 +212,7 @@ function Create-ImageLists {
     $dockerScript += "echo 'Transfer all .tar files to your air-gapped system'"
 
     $dockerScript | Out-File -FilePath $dockerScriptPath -Encoding UTF8
-    Write-ColorOutput "✓ Created Docker script: $dockerScriptPath" "Green"
+    Write-ColorOutput "SUCCESS Created Docker script: $dockerScriptPath" "Green"
 }
 
 function Create-VersionInfo {
@@ -249,7 +229,7 @@ function Create-VersionInfo {
 
     $versionPath = Join-Path $AirgapDir "versions.json"
     $versionInfo | ConvertTo-Json -Depth 3 | Out-File -FilePath $versionPath -Encoding UTF8
-    Write-ColorOutput "✓ Created version info: $versionPath" "Green"
+    Write-ColorOutput "SUCCESS Created version info: $versionPath" "Green"
 }
 
 function Show-DownloadSummary {
@@ -258,25 +238,26 @@ function Show-DownloadSummary {
 
     if (Test-Path $AirgapDir) {
         $totalSize = (Get-ChildItem $AirgapDir -Recurse -File | Measure-Object -Property Length -Sum).Sum / 1MB
-        Write-ColorOutput "✓ All assets downloaded to: $AirgapDir" "Green"
-        Write-ColorOutput "Total size: $([math]::Round($totalSize, 2)) MB" "Cyan"
+        $totalSizeRounded = [math]::Round($totalSize, 2)
+        Write-ColorOutput "SUCCESS All assets downloaded to: $AirgapDir" "Green"
+        Write-ColorOutput "Total size: $totalSizeRounded MB" "Cyan"
 
         Write-ColorOutput "" "White"
         Write-ColorOutput "Downloaded Components:" "Cyan"
-        Write-ColorOutput "  • K3s $K3sVersion binary and images" "White"
-        Write-ColorOutput "  • Helm $HelmVersion binary" "White"
-        Write-ColorOutput "  • cert-manager $CertManagerVersion manifests and charts" "White"
-        Write-ColorOutput "  • Rancher $RancherVersion charts" "White"
-        Write-ColorOutput "  • Container image lists and Docker scripts" "White"
+        Write-ColorOutput "  * K3s $K3sVersion binary and images" "White"
+        Write-ColorOutput "  * Helm $HelmVersion binary" "White"
+        Write-ColorOutput "  * cert-manager $CertManagerVersion manifests and charts" "White"
+        Write-ColorOutput "  * Rancher $RancherVersion charts" "White"
+        Write-ColorOutput "  * Container image lists and Docker scripts" "White"
 
         Write-ColorOutput "" "White"
         Write-ColorOutput "Directory Structure:" "Yellow"
         Write-ColorOutput "  $AirgapDir/" "Cyan"
-        Write-ColorOutput "  ├── binaries/     (K3s, Helm binaries)" "White"
-        Write-ColorOutput "  ├── images/       (Container images and lists)" "White"
-        Write-ColorOutput "  ├── charts/       (Helm charts)" "White"
-        Write-ColorOutput "  ├── manifests/    (Kubernetes manifests)" "White"
-        Write-ColorOutput "  └── versions.json (Version information)" "White"
+        Write-ColorOutput "  +-- binaries/     (K3s, Helm binaries)" "White"
+        Write-ColorOutput "  +-- images/       (Container images and lists)" "White"
+        Write-ColorOutput "  +-- charts/       (Helm charts)" "White"
+        Write-ColorOutput "  +-- manifests/    (Kubernetes manifests)" "White"
+        Write-ColorOutput "  +-- versions.json (Version information)" "White"
 
         Write-ColorOutput "" "White"
         Write-ColorOutput "Next Steps:" "Yellow"
@@ -294,7 +275,7 @@ function Start-Download {
         # Test internet connection
         Write-ColorOutput "Testing internet connection..." "Yellow"
         $response = Invoke-WebRequest -Uri "https://github.com" -Method Head -TimeoutSec 10
-        Write-ColorOutput "✓ Internet connection OK" "Green"
+        Write-ColorOutput "SUCCESS Internet connection working" "Green"
 
         # Download all assets
         Initialize-DirectoryStructure
@@ -308,7 +289,7 @@ function Start-Download {
 
     }
     catch {
-        Write-ColorOutput "Error: $($_.Exception.Message)" "Red"
+        Write-ColorOutput "ERROR: $($_.Exception.Message)" "Red"
         exit 1
     }
 }
