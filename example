@@ -77,3 +77,5 @@ WIKIJS_DB_PASSWORD=change-this-wikijs-db-password
 WIKIJS_OIDC_ENABLED=true
 WIKIJS_CLIENT_ID=wikijs
 WIKIJS_CLIENT_SECRET=change-this-wikijs-client-secret
+
+PROJECT_CERTS_DIR="./config/certs"
