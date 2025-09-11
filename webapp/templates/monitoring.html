@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+
+{% block title %}Monitoring Portal - Dashboard{% endblock %}
+
+{% block content %}
+<div class="admin-container">
+    <div class="nav">
+        <div class="nav-brand">📊 Monitoring Portal</div>
+        <div class="nav-user">
+            <div class="user-info">
+                <div class="user-name">{{ user.name or user.username }}</div>
+                <div class="user-role">
+                    {% if 'admin' in user.groups %}Administrator
+                    {% elif 'modify' in user.groups %}Editor
+                    {% else %}Viewer{% endif %}
+                </div>
+            </div>
+            {% if 'admin' in user.groups %}
+                <a href="{{ url_for('admin') }}" class="btn btn-secondary" style="padding: 8px 15px; font-size: 0.9rem;">Admin Portal</a>
+            {% endif %}
+            <a href="{{ url_for('profile') }}" class="btn btn-secondary" style="padding: 8px 15px; font-size: 0.9rem;">Profile</a>
+            <a href="{{ url_for('logout') }}" class="btn btn-danger" style="padding: 8px 15px; font-size: 0.9rem;">Logout</a>
+        </div>
+    </div>
+
+    <div class="content">
+        <div class="header" style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); border-radius: 12px; margin-bottom: 30px;">
+            <h1 style="margin: 0; font-size: 2.5rem;">📊 Monitoring Dashboard</h1>
+            <p style="margin: 15px 0 0 0; opacity: 0.9; font-size: 1.1rem;">Access your monitoring and metrics platforms</p>
+        </div>
+
+        <div class="alert alert-success">
+            <strong>Welcome {{ user.name or user.username }}!</strong>
+            You have
+            {% if 'modify' in user.groups %}editor{% else %}viewer{% endif %}
+            access to the monitoring infrastructure.
+        </div>
+
+        <!-- Quick Actions Bar -->
+        <div style="background: #f8f9fa; padding: 20px; border-radius: 12px; margin-bottom: 30px; display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
+            <div style="font-weight: bold; color: #1e3c72; margin-right: 15px;">Quick Access:</div>
+            <button class="btn" onclick="window.open('/grafana', '_blank')" style="padding: 10px 20px;">
+                📊 Open Grafana
+            </button>
+            <button class="btn" onclick="window.open('/prometheus', '_blank')" style="padding: 10px 20px;">
+                🔥 Open Prometheus
+            </button>
+            {% if wikijs_enabled %}
+            <button class="btn btn-secondary" onclick="window.open('{{ documentation_url }}', '_blank')" style="padding: 10px 20px;">
+                📚 Documentation
+            </button>
+            {% endif %}
+            {% if 'modify' in user.groups %}
+            <button class="btn btn-secondary" onclick="window.open('/grafana/dashboard/new', '_blank')" style="padding: 10px 20px;">
+                ➕ New Dashboard
+            </button>
+            {% endif %}
+        </div>
+
+        <!-- Main Monitoring Services -->
+        <div class="grid">
+            <div class="service-card" onclick="window.open('/grafana', '_blank')" style="cursor: pointer;">
+                <div class="service-icon">📊</div>
+                <div class="service-title">Grafana</div>
+                <div class="service-description">
+                    Comprehensive monitoring dashboards and visualization platform.
+                    {% if 'modify' in user.groups %}
+                        Create custom dashboards, set up alerts, and analyze metrics.
+                    {% else %}
+                        View system metrics, performance data, and pre-built dashboards.
+                    {% endif %}
+                </div>
+                <div style="margin: 20px 0;">
+                    <div style="font-size: 0.9rem; color: #666;">
+                        <strong>Access Level:</strong>
+                        {% if 'modify' in user.groups %}
+                            <span style="color: #ffc107; font-weight: bold;">Editor</span> - Create & modify dashboards
+                        {% else %}
+                            <span style="color: #28a745; font-weight: bold;">Viewer</span> - Read-only access
+                        {% endif %}
+                    </div>
+                </div>
+                <a href="/grafana" class="btn" target="_blank">Open Grafana Dashboard</a>
+            </div>
+
+            <div class="service-card" onclick="window.open('/prometheus', '_blank')" style="cursor: pointer;">
+                <div class="service-icon">🔥</div>
+                <div class="service-title">Prometheus</div>
+                <div class="service-description">
+                    Metrics collection and alerting system. Query raw metrics data,
+                    explore time series, and investigate system behavior in detail.
+                    Direct access to the Prometheus query interface and targets.
+                </div>
+                <div style="margin: 20px 0;">
+                    <div style="font-size: 0.9rem; color: #666;">
+                        <strong>Features:</strong> PromQL queries, metrics explorer, targets status
+                    </div>
+                </div>
+                <a href="/prometheus" class="btn" target="_blank">Open Prometheus</a>
+            </div>
+
+            {% if wikijs_enabled %}
+            <div class="service-card" onclick="window.open('{{ documentation_url }}', '_blank')" style="cursor: pointer;">
+                <div class="service-icon">📚</div>
+                <div class="service-title">Documentation</div>
+                <div class="service-description">
+                    System documentation, operational procedures, troubleshooting guides,
+                    and knowledge base. Browse documentation organized by service and topic.
+                </div>
+                <div style="margin: 20px 0;">
+                    <div style="font-size: 0.9rem; color: #666;">
+                        <strong>Features:</strong> Search, categorized docs, user guides
+                    </div>
+                </div>
+                <a href="{{ documentation_url }}" class="btn btn-secondary" target="_blank">Open Wiki</a>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Monitoring Overview -->
+        <div style="margin-top: 40px;">
+            <h3 style="color: #1e3c72; margin-bottom: 20px;">🔍 Monitoring Overview</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+
+                <div style="background: white; border: 1px solid #dee2e6; border-radius: 8px; padding: 20px;">
+                    <h4 style="color: #1e3c72; margin-bottom: 15px;">📈 Key Metrics</h4>
+                    <ul style="margin: 0; padding-left: 20px; color: #666; line-height: 1.8;">
+                        <li>System Performance & Resources</li>
+                        <li>Application Health & Uptime</li>
+                        <li>Network & Infrastructure Status</li>
+                        <li>Custom Business Metrics</li>
+                    </ul>
+                </div>
+
+                <div style="background: white; border: 1px solid #dee2e6; border-radius: 8px; padding: 20px;">
+                    <h4 style="color: #1e3c72; margin-bottom: 15px;">🚨 Alerting</h4>
+                    <ul style="margin: 0; padding-left: 20px; color: #666; line-height: 1.8;">
+                        {% if 'modify' in user.groups %}
+                        <li>Configure alert rules & thresholds</li>
+                        <li>Set up notification channels</li>
+                        <li>Manage alert groups & silencing</li>
+                        {% else %}
+                        <li>View active alerts & status</li>
+                        <li>Monitor alert history</li>
+                        <li>Check system health indicators</li>
+                        {% endif %}
+                        <li>Real-time alert notifications</li>
+                    </ul>
+                </div>
+
+                {% if 'modify' in user.groups %}
+                <div style="background: white; border: 1px solid #dee2e6; border-radius: 8px; padding: 20px;">
+                    <h4 style="color: #1e3c72; margin-bottom: 15px;">⚙️ Configuration</h4>
+                    <ul style="margin: 0; padding-left: 20px; color: #666; line-height: 1.8;">
+                        <li>Data source management</li>
+                        <li>Dashboard templates & imports</li>
+                        <li>User permissions & teams</li>
+                        <li>Plugin management</li>
+                    </ul>
+                </div>
+                {% endif %}
+
+                <div style="background: white; border: 1px solid #dee2e6; border-radius: 8px; padding: 20px;">
+                    <h4 style="color: #1e3c72; margin-bottom: 15px;">📋 Resources</h4>
+                    <ul style="margin: 0; padding-left: 20px; color: #666; line-height: 1.8;">
+                        <li><a href="/grafana/dashboards" target="_blank">Browse Dashboards</a></li>
+                        <li><a href="/prometheus/targets" target="_blank">View Targets</a></li>
+                        <li><a href="/grafana/alerting" target="_blank">Alert Manager</a></li>
+                        {% if wikijs_enabled %}
+                        <li><a href="{{ documentation_url }}" target="_blank">System Documentation</a></li>
+                        {% endif %}
+                        <li><a href="{{ url_for('profile') }}">Your Profile</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Status -->
+        <div style="margin-top: 40px; padding: 20px; background: #f8f9fa; border-radius: 12px;">
+            <h3 style="color: #1e3c72; margin-bottom: 20px;">🟢 System Status</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                <div style="text-align: center; padding: 15px;">
+                    <div style="font-size: 2rem; color: #28a745;">✅</div>
+                    <div style="font-weight: bold; margin: 10px 0;">Grafana</div>
+                    <div style="font-size: 0.9rem; color: #666;">Online & Healthy</div>
+                </div>
+                <div style="text-align: center; padding: 15px;">
+                    <div style="font-size: 2rem; color: #28a745;">✅</div>
+                    <div style="font-weight: bold; margin: 10px 0;">Prometheus</div>
+                    <div style="font-size: 0.9rem; color: #666;">Collecting Metrics</div>
+                </div>
+                <div style="text-align: center; padding: 15px;">
+                    <div style="font-size: 2rem; color: #28a745;">✅</div>
+                    <div style="font-weight: bold; margin: 10px 0;">Authentication</div>
+                    <div style="font-size: 0.9rem; color: #666;">SSO Active</div>
+                </div>
+                <div style="text-align: center; padding: 15px;">
+                    <div style="font-size: 2rem; color: #28a745;">✅</div>
+                    <div style="font-weight: bold; margin: 10px 0;">Data Collection</div>
+                    <div style="font-size: 0.9rem; color: #666;">All Targets Up</div>
+                </div>
+                {% if wikijs_enabled %}
+                <div style="text-align: center; padding: 15px;">
+                    <div style="font-size: 2rem; color: #28a745;">✅</div>
+                    <div style="font-weight: bold; margin: 10px 0;">Documentation</div>
+                    <div style="font-size: 0.9rem; color: #666;">Wiki.js Online</div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Help & Documentation -->
+        {% if wikijs_enabled %}
+        <div style="margin-top: 40px; padding: 20px; background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%); border-radius: 12px;">
+            <h3 style="color: #1e3c72; margin-bottom: 20px;">📚 Need Help?</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px;">
+                <div style="text-align: center; padding: 15px;">
+                    <div style="font-size: 1.5rem; color: #1e3c72; margin-bottom: 10px;">🚀</div>
+                    <div style="font-weight: bold; margin-bottom: 5px;">Getting Started</div>
+                    <div style="font-size: 0.9rem; color: #666; margin-bottom: 10px;">New to the monitoring platform?</div>
+                    <a href="{{ documentation_url }}/getting-started" class="btn btn-secondary" target="_blank" style="padding: 8px 15px; font-size: 0.9rem;">Quick Start Guide</a>
+                </div>
+                <div style="text-align: center; padding: 15px;">
+                    <div style="font-size: 1.5rem; color: #1e3c72; margin-bottom: 10px;">🔧</div>
+                    <div style="font-weight: bold; margin-bottom: 5px;">Troubleshooting</div>
+                    <div style="font-size: 0.9rem; color: #666; margin-bottom: 10px;">Common issues and solutions</div>
+                    <a href="{{ documentation_url }}/troubleshooting" class="btn btn-secondary" target="_blank" style="padding: 8px 15px; font-size: 0.9rem;">Troubleshooting</a>
+                </div>
+                <div style="text-align: center; padding: 15px;">
+                    <div style="font-size: 1.5rem; color: #1e3c72; margin-bottom: 10px;">📖</div>
+                    <div style="font-weight: bold; margin-bottom: 5px;">User Manual</div>
+                    <div style="font-size: 0.9rem; color: #666; margin-bottom: 10px;">Complete documentation</div>
+                    <a href="{{ documentation_url }}" class="btn btn-secondary" target="_blank" style="padding: 8px 15px; font-size: 0.9rem;">Browse All Docs</a>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Session Info -->
+        <div style="margin-top: 30px; padding: 15px; background: #e9ecef; border-radius: 8px; font-size: 0.9rem; color: #666;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+                <div>
+                    <strong>Session:</strong> {{ user.username }} |
+                    <strong>Role:</strong> {{ 'Editor' if 'modify' in user.groups else 'Viewer' }} |
+                    <strong>Auth:</strong> Keycloak SSO
+                    {% if wikijs_enabled %} | <strong>Docs:</strong> Wiki.js Available{% endif %}
+                </div>
+                <div>
+                    <button onclick="location.reload()" class="btn btn-secondary" style="padding: 5px 10px; font-size: 0.8rem;">
+                        🔄 Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Keyboard shortcuts
+document.addEventListener('keydown', function(e) {
+    if (e.ctrlKey || e.metaKey) {
+        switch(e.key) {
+            case 'g':
+                e.preventDefault();
+                window.open('/grafana', '_blank');
+                break;
+            case 'p':
+                e.preventDefault();
+                window.open('/prometheus', '_blank');
+                break;
+            {% if wikijs_enabled %}
+            case 'd':
+                e.preventDefault();
+                window.open('{{ documentation_url }}', '_blank');
+                break;
+            {% endif %}
+            case 'r':
+                e.preventDefault();
+                location.reload();
+                break;
+        }
+    }
+});
+
+// Auto-refresh every 5 minutes
+setTimeout(function() {
+    location.reload();
+}, 300000);
+
+// Add loading states to buttons
+document.querySelectorAll('.btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        if (this.getAttribute('href') && this.getAttribute('target') === '_blank') {
+            this.style.opacity = '0.7';
+            this.innerHTML = this.innerHTML.replace(/^/, '⏳ ');
+            setTimeout(() => {
+                this.style.opacity = '1';
+            }, 1000);
+        }
+    });
+});
+</script>
+{% endblock %}
